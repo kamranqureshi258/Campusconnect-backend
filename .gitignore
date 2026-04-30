@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.egg-info/
+.Python
+venv/
+.venv/
+env/
+.env
+
+# Tooling / OS
+.DS_Store
+Thumbs.db
+
+# Debug artifacts
+*_debug.html
+*_response.html
+*_init_debug.html
+
+# Editor
+.idea/
+.vscode/
+
