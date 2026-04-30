@@ -1,0 +1,58 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'account_remote_repository.dart';
+
+// **************************************************************************
+// RiverpodGenerator
+// **************************************************************************
+
+// GENERATED CODE - DO NOT MODIFY BY HAND
+// ignore_for_file: type=lint, type=warning
+
+@ProviderFor(accountRemoteRepository)
+final accountRemoteRepositoryProvider = AccountRemoteRepositoryProvider._();
+
+final class AccountRemoteRepositoryProvider
+    extends
+        $FunctionalProvider<
+          AccountRemoteRepository,
+          AccountRemoteRepository,
+          AccountRemoteRepository
+        >
+    with $Provider<AccountRemoteRepository> {
+  AccountRemoteRepositoryProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'accountRemoteRepositoryProvider',
+        isAutoDispose: true,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$accountRemoteRepositoryHash();
+
+  @$internal
+  @override
+  $ProviderElement<AccountRemoteRepository> $createElement(
+    $ProviderPointer pointer,
+  ) => $ProviderElement(pointer);
+
+  @override
+  AccountRemoteRepository create(Ref ref) {
+    return accountRemoteRepository(ref);
+  }
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(AccountRemoteRepository value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<AccountRemoteRepository>(value),
+    );
+  }
+}
+
+String _$accountRemoteRepositoryHash() =>
+    r'6efc53bae575e92b430e1240adc3ba5ebeb04c1b';

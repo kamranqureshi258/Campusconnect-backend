@@ -1,0 +1,177 @@
+import 'package:flutter/material.dart';
+import 'package:iconsax_flutter/iconsax_flutter.dart';
+import 'package:vit_ap_student_app/core/services/analytics_service.dart';
+import 'package:vit_ap_student_app/features/course_page/view/pages/course_page.dart';
+import 'package:vit_ap_student_app/features/digital_assignment/view/pages/digital_assignment_page.dart';
+import 'package:vit_ap_student_app/features/home/view/pages/biometric_page.dart';
+import 'package:vit_ap_student_app/features/home/view/pages/exam_schedule_page.dart';
+import 'package:vit_ap_student_app/features/home/view/pages/grade_history_page.dart';
+import 'package:vit_ap_student_app/features/home/view/pages/marks_page.dart';
+import 'package:vit_ap_student_app/features/home/view/pages/outing/outing_page.dart';
+import 'package:vit_ap_student_app/features/home/view/pages/payments_page.dart';
+import 'package:vit_ap_student_app/features/home/view/widgets/quick_access/gradient_icon.dart';
+
+class QuickAccess extends StatefulWidget {
+  const QuickAccess({super.key});
+
+  @override
+  State<QuickAccess> createState() => _MyQuickAccessState();
+}
+
+class _MyQuickAccessState extends State<QuickAccess> {
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Center(
+        child: Container(
+          height: 200,
+          width: MediaQuery.of(context).size.width,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed('biometric');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const BiometricPage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.finger_scan_copy,
+                      text: 'Biometric',
+                    ),
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed('marks');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const MarksPage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.chart_square_copy,
+                      text: 'Marks',
+                    ),
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed('grades');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const GradeHistoryPage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.graph_copy,
+                      text: 'Grades',
+                    ),
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed('exams');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const ExamSchedulePage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.calendar_2_copy,
+                      text: 'Exams',
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed('outing');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const OutingPage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.route_square_copy,
+                      text: 'Outing',
+                    ),
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed('payments');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const PaymentsPage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.receipt_item_copy,
+                      text: 'Payments',
+                    ),
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed(
+                            'digital_assignments');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const DigitalAssignmentPage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.document_upload_copy,
+                      text: 'DA',
+                    ),
+                    GradientIcon(
+                      iconBackgroundColor:
+                          Theme.of(context).colorScheme.primary,
+                      onPressed: () {
+                        AnalyticsService.logQuickAccessUsed('wifi');
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (builder) => const CoursePage(),
+                          ),
+                        );
+                      },
+                      icon: Iconsax.book_copy,
+                      text: 'Course',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
