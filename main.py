@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from test_captcha import solve_captcha
@@ -37,6 +37,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Monkeypatch requests.Session.request to default timeout to 10 seconds
+original_request = requests.Session.request
+
+def new_request(self, method, url, *args, **kwargs):
+    kwargs.setdefault("timeout", 10)
+    return original_request(self, method, url, *args, **kwargs)
+
+requests.Session.request = new_request
 
 session = requests.Session()
 
@@ -1024,13 +1033,37 @@ def exam_schedule(sem_id: str = ""):
             sems = _get_semesters()
             sem_id = sems[0]["id"] if sems else ""
 
-        r = session.post(
+        # Step 1: Initialize menu context
+        session.post(
             f"{VTOP_BASE}/examinations/doSearchExamScheduleForStudent",
-            data={"_csrf": csrf, "semesterSubId": sem_id, "authorizedID": auth_id,
-                  "verifyMenu": "true", "nocache": str(int(time.time() * 1000))},
+            data={
+                "verifyMenu": "true",
+                "authorizedID": auth_id,
+                "_csrf": csrf,
+                "nocache": str(int(time.time() * 1000))
+            },
             headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
             verify=False,
         )
+
+        # Step 2: Fetch the actual exam schedule results
+        r = session.post(
+            f"{VTOP_BASE}/examinations/doSearchExamScheduleForStudent",
+            data={
+                "_csrf": csrf,
+                "semesterSubId": sem_id,
+                "authorizedID": auth_id
+            },
+            headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+            verify=False,
+        )
+        # Save raw HTML response for debugging
+        try:
+            with open("exam_schedule_debug.html", "w", encoding="utf-8") as f:
+                f.write(r.text)
+        except Exception:
+            pass
+
         if "login" in r.url.lower():
             raise HTTPException(status_code=401, detail="Session expired.")
 
@@ -1048,15 +1081,23 @@ def exam_schedule(sem_id: str = ""):
                 if current_group["subjects"]:
                     exam_groups.append(current_group)
                 current_group = {"type": cols[0].get_text(strip=True), "subjects": []}
-            elif len(cols) > 12:
+            elif len(cols) >= 5:
+                serial = cols[0].get_text(strip=True) if len(cols) > 0 else ""
+                code = cols[1].get_text(strip=True) if len(cols) > 1 else ""
+                name = cols[2].get_text(strip=True) if len(cols) > 2 else ""
+                date = cols[6].get_text(strip=True) if len(cols) > 6 else "Not Announced"
+                time_val = cols[9].get_text(strip=True) if len(cols) > 9 else (cols[8].get_text(strip=True) if len(cols) > 8 else "Not Announced")
+                venue = cols[10].get_text(strip=True) if len(cols) > 10 else "Not Announced"
+                seat = cols[12].get_text(strip=True) if len(cols) > 12 else ""
+
                 current_group["subjects"].append({
-                    "serial": cols[0].get_text(strip=True),
-                    "course_code": cols[1].get_text(strip=True),
-                    "course_name": cols[2].get_text(strip=True),
-                    "date": cols[6].get_text(strip=True),
-                    "time": cols[9].get_text(strip=True),
-                    "venue": cols[10].get_text(strip=True),
-                    "seat": cols[12].get_text(strip=True),
+                    "serial": serial,
+                    "course_code": code,
+                    "course_name": name,
+                    "date": date,
+                    "time": time_val,
+                    "venue": venue,
+                    "seat": seat,
                 })
 
         if current_group["subjects"]:
@@ -1409,6 +1450,451 @@ def weekend_outing():
         return {"outings": outings, "message": None}
     except Exception as e:
         return {"outings": [], "message": str(e)}
+
+
+# ============================
+# COURSE MATERIALS
+# ============================
+
+@app.get("/course-page/classes")
+def course_classes(sem_id: str = ""):
+    try:
+        csrf, auth_id = _get_auth()
+        if not sem_id:
+            sems = _get_semesters()
+            sem_id = sems[0]["id"] if sems else ""
+
+        r = session.post(
+            f"{VTOP_BASE}/academics/common/StudentCoursePage",
+            data={
+                "verifyMenu": "true",
+                "authorizedID": auth_id,
+                "_csrf": csrf,
+                "nocache": str(int(time.time() * 1000))
+            },
+            headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+            verify=False,
+        )
+        if "login" in r.url.lower():
+            raise HTTPException(status_code=401, detail="Session expired.")
+
+        # Save HTML response for debugging
+        try:
+            with open("course_page_debug.html", "w", encoding="utf-8") as f:
+                f.write(r.text)
+        except Exception:
+            pass
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        classes = []
+        
+        # Scrape registered courses table at the bottom of the page
+        for row in soup.find_all("tr"):
+            cols = row.find_all("td")
+            if len(cols) >= 5:
+                code = cols[1].get_text(strip=True)
+                title = cols[2].get_text(strip=True)
+                ctype = cols[3].get_text(strip=True)
+                class_id = cols[4].get_text(strip=True)
+                
+                # Check if it has a class_id that starts with semSubId or matches length
+                if class_id and len(class_id) > 5 and class_id.isalnum():
+                    slot = cols[5].get_text(strip=True) if len(cols) > 5 else ""
+                    faculty = cols[6].get_text(strip=True) if len(cols) > 6 else ""
+                    
+                    # Try to extract erpId from Javascript calls in View/Download button in this row
+                    erp_id = ""
+                    btn = row.find("a") or row.find("button")
+                    if btn:
+                        onclick = btn.get("onclick", "") or btn.get("href", "")
+                        ids = re.findall(r"['\"]([^'\"]+)['\"]", onclick)
+                        for arg in ids:
+                            if arg.isdigit() and len(arg) >= 4:
+                                erp_id = arg
+                                break
+                    
+                    classes.append({
+                        "course_code": code,
+                        "course_name": title,
+                        "course_type": ctype,
+                        "class_id": class_id,
+                        "slot": slot,
+                        "faculty_name": faculty,
+                        "erp_id": erp_id or "70792"
+                    })
+
+        return {"classes": classes}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/course-page/semesters")
+def course_semesters():
+    try:
+        csrf, auth_id = _get_auth()
+        r = session.post(
+            f"{VTOP_BASE}/academics/common/StudentCoursePage",
+            data={
+                "verifyMenu": "true",
+                "authorizedID": auth_id,
+                "_csrf": csrf,
+                "nocache": str(int(time.time() * 1000))
+            },
+            headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+            verify=False,
+        )
+        if "login" in r.url.lower():
+            raise HTTPException(status_code=401, detail="Session expired.")
+        
+        soup = BeautifulSoup(r.text, "html.parser")
+        sel = soup.find("select", {"name": "semesterSubId"})
+        sems = []
+        if sel:
+            for opt in sel.find_all("option"):
+                v = opt.get("value", "").strip()
+                if v:
+                    sems.append({"id": v, "name": opt.text.strip()})
+        return {"semesters": sems}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/course-page/courses")
+def course_list(sem_id: str):
+    try:
+        csrf, auth_id = _get_auth()
+        r = session.post(
+            f"{VTOP_BASE}/getCourseForCoursePage",
+            data={
+                "_csrf": csrf,
+                "paramReturnId": "getCourseForCoursePage",
+                "semSubId": sem_id,
+                "authorizedID": auth_id,
+                "x": str(int(time.time() * 1000))
+            },
+            headers={
+                **HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": f"{VTOP_BASE}/academics/common/StudentCoursePage"
+            },
+            verify=False,
+        )
+        try:
+            with open("courses_debug.html", "w", encoding="utf-8") as f:
+                f.write(r.text)
+        except Exception:
+            pass
+        if "login" in r.url.lower():
+            raise HTTPException(status_code=401, detail="Session expired.")
+        
+        soup = BeautifulSoup(r.text, "html.parser")
+        sel = soup.find("select", {"id": "courseCode"}) or soup.find("select", {"name": "courseCode"}) or soup
+        courses = []
+        for opt in sel.find_all("option"):
+            v = opt.get("value", "").strip()
+            if v:
+                courses.append({"id": v, "name": opt.text.strip()})
+        return {"courses": courses}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/course-page/slots")
+def course_slots(sem_id: str, class_id: str):
+    try:
+        csrf, auth_id = _get_auth()
+        r = session.post(
+            f"{VTOP_BASE}/getSlotIdForCoursePage",
+            data={
+                "_csrf": csrf,
+                "classId": class_id,
+                "praType": "source",
+                "paramReturnId": "getSlotIdForCoursePage",
+                "semSubId": sem_id,
+                "authorizedID": auth_id,
+                "x": str(int(time.time() * 1000))
+            },
+            headers={
+                **HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": f"{VTOP_BASE}/academics/common/StudentCoursePage"
+            },
+            verify=False,
+        )
+        try:
+            with open("slots_debug.html", "w", encoding="utf-8") as f:
+                f.write(r.text)
+        except Exception:
+            pass
+        if "login" in r.url.lower():
+            raise HTTPException(status_code=401, detail="Session expired.")
+        
+        soup = BeautifulSoup(r.text, "html.parser")
+        sel = soup.find("select", {"id": "slotId"}) or soup.find("select", {"name": "slotId"}) or soup
+        slots = []
+        for opt in sel.find_all("option"):
+            v = opt.get("value", "").strip()
+            if v:
+                slots.append({"id": v, "name": opt.text.strip()})
+        return {"slots": slots}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/course-page/faculties")
+def course_faculties(sem_id: str, class_id: str, slot_id: str):
+    try:
+        csrf, auth_id = _get_auth()
+        r = session.post(
+            f"{VTOP_BASE}/getFacultyForCoursePage",
+            data={
+                "_csrf": csrf,
+                "classId": class_id,
+                "slotId": slot_id,
+                "praType": "source",
+                "paramReturnId": "getFacultyForCoursePage",
+                "semSubId": sem_id,
+                "authorizedID": auth_id,
+                "x": str(int(time.time() * 1000))
+            },
+            headers={
+                **HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": f"{VTOP_BASE}/academics/common/StudentCoursePage"
+            },
+            verify=False,
+        )
+        try:
+            with open("faculties_debug.html", "w", encoding="utf-8") as f:
+                f.write(r.text)
+        except Exception:
+            pass
+        if "login" in r.url.lower():
+            raise HTTPException(status_code=401, detail="Session expired.")
+        
+        soup = BeautifulSoup(r.text, "html.parser")
+        sel = soup.find("select", {"id": "faculty"}) or soup.find("select", {"name": "faculty"}) or soup
+        faculties = []
+        for opt in sel.find_all("option"):
+            v = opt.get("value", "").strip()
+            if v:
+                faculties.append({"id": v, "name": opt.text.strip()})
+        return {"faculties": faculties}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/course-page/materials")
+def course_materials(class_id: str, erp_id: str, sem_id: str = ""):
+    try:
+        csrf, auth_id = _get_auth()
+        if not sem_id:
+            sems = _get_semesters()
+            sem_id = sems[0]["id"] if sems else ""
+
+        # Resolve the actual class ID from the slot ID list (which lists all faculties and class IDs for this course)
+        actual_class_id = class_id
+        try:
+            r_slots = session.post(
+                f"{VTOP_BASE}/getSlotIdForCoursePage",
+                data={
+                    "_csrf": csrf,
+                    "classId": class_id,
+                    "praType": "source",
+                    "paramReturnId": "getSlotIdForCoursePage",
+                    "semSubId": sem_id,
+                    "authorizedID": auth_id,
+                    "x": str(int(time.time() * 1000))
+                },
+                headers={
+                    **HEADERS,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Referer": f"{VTOP_BASE}/academics/common/StudentCoursePage"
+                },
+                verify=False,
+            )
+            if r_slots.status_code == 200:
+                soup_slots = BeautifulSoup(r_slots.text, "html.parser")
+                for row in soup_slots.find_all("tr"):
+                    btn = row.find("button", {"onclick": re.compile("processViewStudentCourseDetail")}) or \
+                          row.find("a", {"onclick": re.compile("processViewStudentCourseDetail")})
+                    if btn:
+                        onclick = btn.get("onclick", "")
+                        args = re.findall(r"['\"]([^'\"]+)['\"]", onclick)
+                        if len(args) >= 3:
+                            row_sem, row_erp, row_cid = args[0], args[1], args[2]
+                            if row_erp == erp_id:
+                                actual_class_id = row_cid
+                                break
+        except Exception:
+            pass
+
+        payload = {
+            "_csrf": csrf,
+            "semSubId": sem_id,
+            "classId": actual_class_id,
+            "erpId": erp_id,
+            "authorizedID": auth_id,
+            "x": str(int(time.time() * 1000))
+        }
+
+        r = session.post(
+            f"{VTOP_BASE}/processViewStudentCourseDetail",
+            data=payload,
+            headers={
+                **HEADERS,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": f"{VTOP_BASE}/academics/common/StudentCoursePage"
+            },
+            verify=False,
+        )
+        if "login" in r.url.lower():
+            raise HTTPException(status_code=401, detail="Session expired.")
+
+        # Save HTML response for debugging
+        try:
+            with open("course_detail_debug.html", "w", encoding="utf-8") as f:
+                f.write(r.text)
+        except Exception:
+            pass
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        materials = []
+        syllabus_id = ""
+
+        # Check for syllabus download button
+        syllabus_btn = soup.find("button", {"onclick": re.compile(r"courseSyllabusDownload|Syllabus", re.I)}) or \
+                       soup.find("a", {"href": re.compile(r"courseSyllabusDownload|Syllabus", re.I)}) or \
+                       soup.find("a", {"onclick": re.compile(r"courseSyllabusDownload|Syllabus", re.I)})
+        if syllabus_btn:
+            onclick = syllabus_btn.get("onclick", "") or syllabus_btn.get("href", "")
+            args = re.findall(r"['\"]([^'\"]+)['\"]", onclick)
+            if args:
+                syllabus_id = args[0]
+
+        # Parse materials tables
+        for table in soup.find_all("table"):
+            rows = table.find_all("tr")
+            if not rows:
+                continue
+            
+            # Find the header row if it exists
+            header_row = rows[0]
+            header_cols = header_row.find_all(["td", "th"])
+            
+            topic_idx = -1
+            material_idx = -1
+            
+            for idx, col in enumerate(header_cols):
+                text = col.get_text(strip=True).lower()
+                if "topic" in text:
+                    topic_idx = idx
+                elif "material" in text or "download" in text:
+                    material_idx = idx
+            
+            has_headers = (topic_idx != -1 and material_idx != -1)
+            
+            for row in rows:
+                if has_headers and row == header_row:
+                    continue
+                
+                cols = row.find_all("td")
+                if not cols:
+                    continue
+                
+                # Skip the table header if we didn't match has_headers but it contains headers
+                first_col_text = cols[0].get_text(strip=True).lower()
+                if "sl.no" in first_col_text or "class group" in first_col_text:
+                    continue
+                
+                if has_headers:
+                    if topic_idx < len(cols) and material_idx < len(cols):
+                        topic = cols[topic_idx].get_text(strip=True)
+                        links = cols[material_idx].find_all(["a", "button"])
+                    else:
+                        continue
+                elif len(cols) == 2:
+                    topic = cols[0].get_text(strip=True)
+                    links = cols[1].find_all(["a", "button"])
+                elif len(cols) >= 5:
+                    topic = cols[-2].get_text(strip=True)
+                    links = cols[-1].find_all(["a", "button"])
+                else:
+                    continue
+                
+                for link in links:
+                    name = link.get_text(strip=True) or "Download Reference Material"
+                    onclick = link.get("onclick", "") or link.get("href", "")
+                    
+                    args = re.findall(r"['\"]([^'\"]+)['\"]", onclick)
+                    if args:
+                        file_id = args[0]
+                        if "allCourseMeterialDownload" in file_id:
+                            continue
+                        materials.append({
+                            "topic": topic,
+                            "name": name,
+                            "file_id": file_id
+                        })
+
+        return {
+            "syllabus_id": syllabus_id,
+            "materials": materials
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/course-page/download")
+def download_material(file_id: str):
+    try:
+        csrf, auth_id = _get_auth()
+        params = {
+            "authorizedID": auth_id,
+            "_csrf": csrf,
+            "x": str(int(time.time() * 1000))
+        }
+
+        # Make the authenticated request directly to that file URL on VTOP
+        r = session.get(
+            f"{VTOP_BASE}/{file_id}",
+            params=params,
+            headers=HEADERS,
+            verify=False,
+            stream=True
+        )
+        if "login" in r.url.lower():
+            raise HTTPException(status_code=401, detail="Session expired.")
+
+        content_type = r.headers.get("Content-Type", "application/octet-stream")
+        content_disposition = r.headers.get("Content-Disposition", "")
+        content_length = r.headers.get("Content-Length")
+        
+        headers = {
+            "Content-Disposition": content_disposition,
+        }
+        if content_length:
+            headers["Content-Length"] = content_length
+
+        return StreamingResponse(
+            r.iter_content(chunk_size=1024*8),
+            media_type=content_type,
+            headers=headers
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
