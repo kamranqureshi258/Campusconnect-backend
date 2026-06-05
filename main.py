@@ -981,14 +981,49 @@ def grade_history():
         semesters = []
         cgpa = ""
 
-        # Try to find CGPA
-        for td in soup.find_all("td"):
+        # Try to find CGPA using column matching first
+        for td in soup.find_all(["td", "th"]):
             txt = td.get_text(strip=True)
-            if "CGPA" in txt or "cgpa" in txt.lower():
-                nxt = td.find_next_sibling("td")
-                if nxt:
-                    cgpa = nxt.get_text(strip=True)
-                break
+            if txt.upper() == "CGPA":
+                table = td.find_parent("table")
+                if table:
+                    rows = table.find_all("tr")
+                    try:
+                        for r_idx, row in enumerate(rows):
+                            headers = row.find_all(["td", "th"])
+                            if td in headers:
+                                idx = headers.index(td)
+                                if r_idx + 1 < len(rows):
+                                    next_row = rows[r_idx + 1]
+                                    vals = next_row.find_all(["td", "th"])
+                                    if idx < len(vals):
+                                        val = vals[idx].get_text(strip=True)
+                                        float(val)  # Verify it's a valid float
+                                        cgpa = val
+                                        break
+                        if cgpa:
+                            break
+                    except Exception:
+                        pass
+
+        # Fallback to general label search if not found
+        if not cgpa:
+            for td in soup.find_all("td"):
+                txt = td.get_text(strip=True)
+                if "CGPA" in txt or "cgpa" in txt.lower():
+                    nxt = td.find_next_sibling("td")
+                    if nxt:
+                        val = nxt.get_text(strip=True)
+                        try:
+                            float(val)
+                            cgpa = val
+                            break
+                        except ValueError:
+                            import re
+                            match = re.search(r"\d+\.\d+", val)
+                            if match:
+                                cgpa = match.group(0)
+                                break
 
         # Parse semester tables
         current_sem = None
@@ -998,19 +1033,28 @@ def grade_history():
                 th = row.find_all("th")
                 if th:
                     header = th[0].get_text(strip=True)
-                    if any(kw in header for kw in ["Semester", "SEM", "FALL", "WINTER", "SUMMER"]):
+                    if any(kw in header.upper() for kw in ["SEMESTER", "SEM", "FALL", "WINTER", "SUMMER", "EFFECTIVE GRADES", "GRADE HISTORY"]):
                         current_sem = {"name": header, "sgpa": "", "credits": "", "courses": []}
                         semesters.append(current_sem)
                 continue
-            if len(cols) >= 5 and current_sem is not None:
-                code = cols[0].get_text(strip=True)
-                if code and not code.isdigit():
+            if len(cols) >= 6:
+                sl_no = cols[0].get_text(strip=True)
+                c_code = cols[1].get_text(strip=True)
+                c_name = cols[2].get_text(strip=True)
+                c_credits = cols[4].get_text(strip=True)
+                c_grade = cols[5].get_text(strip=True)
+                
+                # Check if it's a valid course row
+                if sl_no.isdigit() and c_code and any(char.isalpha() for char in c_code):
+                    if current_sem is None:
+                        current_sem = {"name": "Effective Grades", "sgpa": "", "credits": "", "courses": []}
+                        semesters.append(current_sem)
+                    
                     current_sem["courses"].append({
-                        "code": code,
-                        "name": cols[1].get_text(strip=True) if len(cols) > 1 else "",
-                        "credits": cols[2].get_text(strip=True) if len(cols) > 2 else "",
-                        "grade": cols[3].get_text(strip=True) if len(cols) > 3 else "",
-                        "grade_points": cols[4].get_text(strip=True) if len(cols) > 4 else "",
+                        "code": c_code,
+                        "name": c_name,
+                        "credits": c_credits,
+                        "grade": c_grade,
                     })
 
         return {"cgpa": cgpa, "semesters": semesters}
